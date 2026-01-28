@@ -4,6 +4,7 @@ import threading
 import os
 import time
 import json
+import subprocess
 import numpy as np
 import cv2
 import librosa
@@ -38,21 +39,34 @@ class SpectrumApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Cyberpunk Waveform Automator v6 - Ultimate")
-        self.geometry("1200x900")
-        self.minsize(1000, 800)
+        self.title("Cyberpunk Waveform Automator v7 - GPU Edition")
+        self.geometry("1200x950")
+        self.minsize(1000, 850)
 
-        # Variáveis de Caminho
+        # Variáveis
         self.audio_path = ctk.StringVar()
         self.image_path = ctk.StringVar()
         self.logo_path = ctk.StringVar()
-        
         self.is_processing = False
         self.start_time = 0
         self.dummy_data = self.generate_dummy_data()
-
+        
+        # --- GPU CHECK ---
+        self.gpu_available = self.check_nvenc_support()
+        
         self.setup_ui()
         self.after(100, self.update_preview)
+
+    def check_nvenc_support(self):
+        """Verifica se o FFmpeg suporta aceleração NVIDIA NVENC"""
+        try:
+            # Executa 'ffmpeg -encoders' e procura por 'h264_nvenc'
+            result = subprocess.run(['ffmpeg', '-encoders'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if 'h264_nvenc' in result.stdout:
+                return True
+            return False
+        except Exception:
+            return False
 
     def generate_dummy_data(self):
         x = np.linspace(0, np.pi, 128)
@@ -67,7 +81,7 @@ class SpectrumApp(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # === Sidebar (Esquerda - Arquivos e Presets) ===
+        # === Sidebar (Esquerda) ===
         self.sidebar = ctk.CTkFrame(self, width=320, corner_radius=10)
         self.sidebar.grid(row=0, column=0, sticky="nsew", padx=(15, 5), pady=15)
         
@@ -107,7 +121,7 @@ class SpectrumApp(ctk.CTk):
         self.bitrate_var = ctk.StringVar(value="320k (Alta)")
         ctk.CTkOptionMenu(self.sidebar, variable=self.bitrate_var, values=["320k (Alta)", "192k (Padrão)", "128k (Baixa)"]).pack(fill="x", padx=15, pady=5)
 
-        # Checkboxes de Audio
+        # Checkboxes
         self.check_norm = ctk.CTkCheckBox(self.sidebar, text="Normalizar Volume (0dB)", onvalue=True, offvalue=False)
         self.check_norm.select()
         self.check_norm.pack(pady=5, anchor="w", padx=20)
@@ -116,7 +130,24 @@ class SpectrumApp(ctk.CTk):
         self.check_fade.select()
         self.check_fade.pack(pady=5, anchor="w", padx=20)
 
-        # === Main Panel (Direita - Visual) ===
+        # === Hardware Status (NOVO) ===
+        ctk.CTkLabel(self.sidebar, text="STATUS DO HARDWARE", font=("Orbitron", 12, "bold"), text_color="gray").pack(pady=(25, 5))
+        
+        self.gpu_frame = ctk.CTkFrame(self.sidebar, fg_color="#222")
+        self.gpu_frame.pack(fill="x", padx=15, pady=5)
+        
+        if self.gpu_available:
+            self.lbl_gpu_status = ctk.CTkLabel(self.gpu_frame, text="⚡ GPU DETECTADA\n(NVENC ATIVO)", font=("Consolas", 12, "bold"), text_color="#00ff00")
+            self.lbl_gpu_desc = ctk.CTkLabel(self.sidebar, text="Renderização ultrarrápida habilitada.", font=("Roboto", 10), text_color="gray")
+        else:
+            self.lbl_gpu_status = ctk.CTkLabel(self.gpu_frame, text="⚠️ GPU NÃO ENCONTRADA\n(USANDO CPU)", font=("Consolas", 12, "bold"), text_color="#ff9900")
+            self.lbl_gpu_desc = ctk.CTkLabel(self.sidebar, text="A renderização será mais lenta.\nCertifique-se de ter drivers NVIDIA.", font=("Roboto", 10), text_color="#ff9900")
+            
+        self.lbl_gpu_status.pack(pady=10)
+        self.lbl_gpu_desc.pack(pady=0)
+
+
+        # === Main Panel (Direita) ===
         self.main_panel = ctk.CTkFrame(self, corner_radius=10)
         self.main_panel.grid(row=0, column=1, sticky="nsew", padx=(5, 15), pady=15)
         
@@ -126,7 +157,7 @@ class SpectrumApp(ctk.CTk):
         self.preview_canvas = Canvas(self.main_panel, height=220, bg="#000000", highlightthickness=0)
         self.preview_canvas.pack(fill="x", padx=20, pady=10)
 
-        # Controles Visuais
+        # Controles
         ctk.CTkLabel(self.main_panel, text="Paleta de Cores:").pack(anchor="w", padx=25)
         self.color_var = ctk.StringVar(value="Neon Magenta")
         self.color_menu = ctk.CTkOptionMenu(self.main_panel, variable=self.color_var, values=list(CYBERPUNK_COLORS.keys()), command=self.update_preview)
@@ -148,7 +179,7 @@ class SpectrumApp(ctk.CTk):
         self.sld_pos_y.set(0.6)
         self.sld_pos_y.pack(fill="x", padx=25, pady=5)
 
-        # Configurações do Logo
+        # Logo Config
         ctk.CTkLabel(self.main_panel, text="Posição do Logotipo:").pack(anchor="w", padx=25)
         self.logo_pos_var = ctk.StringVar(value="Centro")
         ctk.CTkOptionMenu(self.main_panel, variable=self.logo_pos_var, values=LOGO_POSITIONS, command=self.update_preview).pack(fill="x", padx=25, pady=5)
@@ -175,7 +206,7 @@ class SpectrumApp(ctk.CTk):
         self.btn_start = ctk.CTkButton(self.footer, text="INICIAR RENDERIZAÇÃO", font=("Orbitron", 14, "bold"), height=40, fg_color="green", hover_color="darkgreen", command=self.start_process)
         self.btn_start.pack(pady=(0, 15))
 
-    # --- Lógica de Presets ---
+    # --- Funções Auxiliares (Mesmas da v6) ---
     def save_preset(self):
         preset = {
             "res": self.res_var.get(),
@@ -191,9 +222,8 @@ class SpectrumApp(ctk.CTk):
         }
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON Preset", "*.json")])
         if path:
-            with open(path, "w") as f:
-                json.dump(preset, f, indent=4)
-            messagebox.showinfo("Salvo", "Preset salvo com sucesso!")
+            with open(path, "w") as f: json.dump(preset, f, indent=4)
+            messagebox.showinfo("Salvo", "Preset salvo!")
 
     def load_preset(self):
         path = filedialog.askopenfilename(filetypes=[("JSON Preset", "*.json")])
@@ -210,11 +240,9 @@ class SpectrumApp(ctk.CTk):
                 self.check_norm.select() if data.get("norm", True) else self.check_norm.deselect()
                 self.check_fade.select() if data.get("fade", True) else self.check_fade.deselect()
                 self.logo_pos_var.set(data.get("logo_pos", "Centro"))
-                
                 self.update_preview()
                 messagebox.showinfo("Carregado", "Preset aplicado!")
 
-    # --- UI Helpers ---
     def update_timer_display(self):
         if self.is_processing:
             elapsed = time.time() - self.start_time
@@ -240,7 +268,6 @@ class SpectrumApp(ctk.CTk):
         w, h = self.preview_canvas.winfo_width(), self.preview_canvas.winfo_height()
         if w < 10: w = 400
         
-        # Desenha Waveform Simples
         n_bins = int(self.sld_density.get())
         sens = self.sld_sens.get()
         pos_y_canvas = self.sld_pos_y.get() * h
@@ -248,30 +275,25 @@ class SpectrumApp(ctk.CTk):
         
         indices = np.linspace(0, len(self.dummy_data)-1, n_bins).astype(int)
         data = self.dummy_data[indices] * sens
-        
         cx, bar_w = w / 2, w / (n_bins * 2)
         
         for i in range(n_bins):
             bh = data[i] * (h/3)
             xl, xr = cx - (i * bar_w) - bar_w, cx + (i * bar_w)
             y_end = pos_y_canvas - bh
-            
             c1, c2 = self.bgr_to_hex(colors[1]), self.bgr_to_hex(colors[0])
             self.preview_canvas.create_rectangle(xl, pos_y_canvas, xl+bar_w, y_end, fill=c2, outline=c1)
             self.preview_canvas.create_rectangle(xr, pos_y_canvas, xr+bar_w, y_end, fill=c2, outline=c1)
 
-        # Desenha "Fantasma" do Logo
         if self.logo_path.get():
             pos = self.logo_pos_var.get()
-            lx, ly = w/2, h/2 # Centro default
+            lx, ly = w/2, h/2
             margin = 20
             if "Sup. Esq" in pos: lx, ly = margin + 20, margin + 20
             elif "Sup. Dir" in pos: lx, ly = w - margin - 20, margin + 20
             elif "Inf. Esq" in pos: lx, ly = margin + 20, h - margin - 20
             elif "Inf. Dir" in pos: lx, ly = w - margin - 20, h - margin - 20
-            
-            self.preview_canvas.create_oval(lx-15, ly-15, lx+15, ly+15, outline="white", width=2, dash=(2,2))
-            self.preview_canvas.create_text(lx, ly, text="LOGO", fill="white", font=("Arial", 8))
+            self.preview_canvas.create_text(lx, ly, text="LOGO", fill="white", font=("Arial", 8, "bold"))
 
     def set_loading(self, active=True):
         if active:
@@ -289,36 +311,27 @@ class SpectrumApp(ctk.CTk):
     def log(self, text):
         self.status_label.configure(text=text)
 
-    # --- Overlay Helper para Logo Transparente ---
     def overlay_image_alpha(self, img, img_overlay, x, y):
-        """Sobrepõe img_overlay (com alpha) sobre img em (x,y)"""
         h, w = img.shape[:2]
         h_ov, w_ov = img_overlay.shape[:2]
-
-        # Limites
         if y >= h or x >= w: return img
         if y + h_ov > h: h_ov = h - y
         if x + w_ov > w: w_ov = w - x
         if h_ov <= 0 or w_ov <= 0: return img
-
         overlay_crop = img_overlay[:h_ov, :w_ov]
         img_crop = img[y:y+h_ov, x:x+w_ov]
-
-        # Separa canais
         alpha = overlay_crop[:, :, 3] / 255.0
         alpha_inv = 1.0 - alpha
-
         for c in range(3):
             img_crop[:, :, c] = (alpha * overlay_crop[:, :, c] + alpha_inv * img_crop[:, :, c])
-        
         img[y:y+h_ov, x:x+w_ov] = img_crop
         return img
 
-    # --- LÓGICA PRINCIPAL ---
+    # --- LÓGICA PRINCIPAL COM GPU CHECK ---
     def start_process(self):
         if self.is_processing: return
         if not self.audio_path.get() or not self.image_path.get():
-            messagebox.showwarning("Aviso", "Faltam arquivos obrigatórios (Áudio/Imagem)!")
+            messagebox.showwarning("Aviso", "Faltam arquivos obrigatórios!")
             return
         
         self.is_processing = True
@@ -327,18 +340,26 @@ class SpectrumApp(ctk.CTk):
 
     def process_video_logic(self):
         try:
-            # 1. Configuração Inicial
             res_name = self.res_var.get()
             target_w, target_h = RESOLUTIONS[res_name]
             bitrate_str = self.bitrate_var.get().split()[0]
             
-            self.log("Preparando arquivos de áudio...")
+            # --- SELEÇÃO DE CODEC BASEADA EM GPU ---
+            if self.gpu_available:
+                video_codec = "h264_nvenc"
+                preset = "p4" # Preset balanceado para NVENC
+                self.log(f"Iniciando MODO GPU (NVENC)...")
+            else:
+                video_codec = "libx264"
+                preset = "ultrafast" # Mais rápido para testes CPU
+                self.log(f"Iniciando MODO CPU (Standard)...")
+
+            self.log("Preparando Áudios...")
             audio_files = [os.path.join(self.audio_path.get(), f) for f in os.listdir(self.audio_path.get()) if f.lower().endswith(('.mp3', '.wav'))]
             audio_files.sort()
             
-            if not audio_files: raise Exception("Pasta de áudio vazia.")
+            if not audio_files: raise Exception("Pasta vazia.")
 
-            # 2. Processamento Avançado de Áudio (Norm + Crossfade)
             processed_clips = []
             crossfade_duration = 4 if self.check_fade.get() else 0
             current_start = 0
@@ -346,54 +367,37 @@ class SpectrumApp(ctk.CTk):
 
             for i, path in enumerate(audio_files):
                 clip = AudioFileClip(path)
+                if self.check_norm.get(): clip = clip.fx(afx.audio_normalize)
+                if self.check_fade.get(): clip = clip.audio_fadein(2).audio_fadeout(2)
                 
-                # Normalização (0dB)
-                if self.check_norm.get():
-                    clip = clip.fx(afx.audio_normalize)
-                
-                # Aplica Fade In/Out para suavizar
-                if self.check_fade.get():
-                    clip = clip.audio_fadein(2).audio_fadeout(2)
-                
-                # Define tempo de início (Overlap)
                 start_t = max(0, current_start - crossfade_duration) if i > 0 else 0
                 clip = clip.set_start(start_t)
-                
                 processed_clips.append(clip)
                 
-                # Timestamp Log
-                real_start = start_t
-                if i > 0 and self.check_fade.get(): real_start += 2 # Ajuste visual
+                real_start = start_t + (2 if i > 0 and self.check_fade.get() else 0)
                 m, s = divmod(int(real_start), 60)
                 timestamps.append(f"{m:02d}:{s:02d} - {os.path.splitext(os.path.basename(path))[0]}")
-                
                 current_start = start_t + clip.duration
 
-            # Salva Tracklist
-            with open(os.path.join(self.audio_path.get(), "tracklist.txt"), "w") as t:
-                t.write("\n".join(timestamps))
+            with open(os.path.join(self.audio_path.get(), "tracklist.txt"), "w") as t: t.write("\n".join(timestamps))
 
-            self.log("Renderizando Mixagem de Áudio (Composite)...")
+            self.log("Mixando Áudio...")
             final_audio = CompositeAudioClip(processed_clips)
             
-            # 3. Preparação Visual (Background + Logo)
             self.log("Processando Imagens...")
             bg = cv2.imread(self.image_path.get())
             bg = cv2.resize(bg, (target_w, target_h))
             
             logo_img = None
             if self.logo_path.get():
-                # Carrega logo com Alpha (UNCHANGED)
                 logo_img = cv2.imread(self.logo_path.get(), cv2.IMREAD_UNCHANGED)
                 if logo_img is not None:
-                    # Redimensiona logo para 15% da altura da tela
                     l_h = int(target_h * 0.15)
                     ratio = l_h / logo_img.shape[0]
                     l_w = int(logo_img.shape[1] * ratio)
                     logo_img = cv2.resize(logo_img, (l_w, l_h))
             
-            # 4. Análise FFT
-            self.log("Análise Espectral (Isso é rápido)...")
+            self.log("Análise FFT...")
             temp_wav = "temp_mix.wav"
             final_audio.write_audiofile(temp_wav, fps=22050, verbose=False, logger=None)
             y, sr = librosa.load(temp_wav, sr=22050)
@@ -402,7 +406,6 @@ class SpectrumApp(ctk.CTk):
             D = np.abs(librosa.stft(y, n_fft=2048, hop_length=512))
             DB = librosa.amplitude_to_db(D, ref=np.max)
 
-            # 5. Parâmetros do Frame
             n_bins = int(self.sld_density.get())
             sens = self.sld_sens.get()
             pos_y_pixel = int(self.sld_pos_y.get() * target_h)
@@ -411,16 +414,12 @@ class SpectrumApp(ctk.CTk):
             logo_pos_setting = self.logo_pos_var.get()
 
             def make_frame(t):
-                # Sincronia
                 idx = int(t * sr / 512)
                 idx = min(idx, DB.shape[1] - 1)
                 data = DB[:n_bins, idx]
                 norm_data = np.clip((data + 80) / 80, 0, 1) * sens
-                
-                # Bass Trigger (para pulso)
                 bass = np.mean(norm_data[:5]) if len(norm_data) > 0 else 0
                 
-                # 1. Background Pulse
                 frame = bg.copy()
                 h, w, _ = frame.shape
                 
@@ -429,7 +428,6 @@ class SpectrumApp(ctk.CTk):
                     M = cv2.getRotationMatrix2D((w//2, h//2), 0, scale)
                     frame = cv2.warpAffine(frame, M, (w, h))
 
-                # 2. Desenha Waveform
                 c_x, b_w = w // 2, int(w / (n_bins * 2))
                 if b_w < 1: b_w = 1
                 max_h = h / 3
@@ -438,48 +436,46 @@ class SpectrumApp(ctk.CTk):
                     bh = int(norm_data[i] ** 2 * max_h)
                     xl, xr = c_x - (i*b_w) - b_w, c_x + (i*b_w)
                     y_e = pos_y_pixel - bh
-                    
-                    cv2.line(frame, (xl+b_w//2, pos_y_pixel), (xl+b_w//2, y_e), colors[1], b_w+4) # Glow
+                    cv2.line(frame, (xl+b_w//2, pos_y_pixel), (xl+b_w//2, y_e), colors[1], b_w+4)
                     cv2.line(frame, (xr+b_w//2, pos_y_pixel), (xr+b_w//2, y_e), colors[1], b_w+4)
-                    cv2.line(frame, (xl+b_w//2, pos_y_pixel), (xl+b_w//2, y_e), colors[0], max(1, b_w-2)) # Main
+                    cv2.line(frame, (xl+b_w//2, pos_y_pixel), (xl+b_w//2, y_e), colors[0], max(1, b_w-2))
                     cv2.line(frame, (xr+b_w//2, pos_y_pixel), (xr+b_w//2, y_e), colors[0], max(1, b_w-2))
 
-                # 3. Desenha Logo Pulsante
                 if logo_img is not None:
-                    # Scale Logo
                     cur_logo = logo_img
                     if pulse:
-                        l_scale = 1.0 + (bass * 0.1) # Logo pulsa mais forte
+                        l_scale = 1.0 + (bass * 0.1)
                         new_size = (int(logo_img.shape[1] * l_scale), int(logo_img.shape[0] * l_scale))
                         cur_logo = cv2.resize(logo_img, new_size)
-                    
                     lh, lw = cur_logo.shape[:2]
                     margin = 40
-                    
-                    # Posicionamento
                     lx, ly = 0, 0
-                    if logo_pos_setting == "Centro":
-                        lx, ly = (w - lw)//2, (h - lh)//2
-                    elif "Sup. Esq" in logo_pos_setting:
-                        lx, ly = margin, margin
-                    elif "Sup. Dir" in logo_pos_setting:
-                        lx, ly = w - lw - margin, margin
-                    elif "Inf. Esq" in logo_pos_setting:
-                        lx, ly = margin, h - lh - margin
-                    elif "Inf. Dir" in logo_pos_setting:
-                        lx, ly = w - lw - margin, h - lh - margin
-                    
+                    if logo_pos_setting == "Centro": lx, ly = (w - lw)//2, (h - lh)//2
+                    elif "Sup. Esq" in logo_pos_setting: lx, ly = margin, margin
+                    elif "Sup. Dir" in logo_pos_setting: lx, ly = w - lw - margin, margin
+                    elif "Inf. Esq" in logo_pos_setting: lx, ly = margin, h - lh - margin
+                    elif "Inf. Dir" in logo_pos_setting: lx, ly = w - lw - margin, h - lh - margin
                     frame = self.overlay_image_alpha(frame, cur_logo, lx, ly)
 
                 return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            self.log(f"RENDERIZANDO ({target_w}x{target_h})...")
+            self.log(f"RENDERIZANDO ({video_codec})...")
             video = VideoClip(make_frame, duration=final_audio.duration)
             video = video.set_audio(final_audio)
             
-            out = os.path.join(self.audio_path.get(), f"Mix_v6_{int(time.time())}.mp4")
+            out = os.path.join(self.audio_path.get(), f"Mix_v7_GPU_{int(time.time())}.mp4")
             
-            video.write_videofile(out, fps=30, codec="libx264", audio_codec="aac", audio_bitrate=bitrate_str, threads=4, verbose=False, logger=None)
+            # --- RENDER FINAL ---
+            video.write_videofile(
+                out, 
+                fps=30, 
+                codec=video_codec, # Habilita GPU se disponível
+                preset=preset, 
+                audio_codec="aac", 
+                audio_bitrate=bitrate_str, 
+                threads=4, 
+                verbose=False, logger=None
+            )
             
             self.log("Concluído!")
             messagebox.showinfo("Sucesso", f"Vídeo salvo em:\n{out}")
