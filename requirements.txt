@@ -1,0 +1,9 @@
+customtkinter
+moviepy==1.0.3
+decorator<5.0
+librosa
+numpy<2.0.0
+opencv-python
+soundfile
+imageio-ffmpeg
+pillow
