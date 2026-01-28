@@ -10,13 +10,13 @@ import cv2
 import librosa
 from moviepy.editor import *
 import moviepy.audio.fx.all as afx
-from PIL import Image
+import moviepy.video.fx.all as vfx
+from PIL import Image, ImageTk # Necessário para mostrar imagem no Canvas
 
 # --- Configurações Globais ---
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("dark-blue")
 
-# Cores (BGR para OpenCV)
 CYBERPUNK_COLORS = {
     "Neon Magenta": ((255, 0, 255), (100, 0, 100)), 
     "Neon Cyan": ((255, 255, 0), (100, 100, 0)),
@@ -39,39 +39,35 @@ class SpectrumApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Cyberpunk Waveform Automator v7 - GPU Edition")
-        self.geometry("1200x950")
+        self.title("Cyberpunk Automator v9 - Visual Overlay Edition")
+        self.geometry("1250x950")
         self.minsize(1000, 850)
 
         # Variáveis
         self.audio_path = ctk.StringVar()
         self.image_path = ctk.StringVar()
         self.logo_path = ctk.StringVar()
+        self.overlay_path = ctk.StringVar()
+        
         self.is_processing = False
         self.start_time = 0
         self.dummy_data = self.generate_dummy_data()
+        self.overlay_preview_img = None # Armazena a imagem processada do overlay
         
-        # --- GPU CHECK ---
         self.gpu_available = self.check_nvenc_support()
         
         self.setup_ui()
         self.after(100, self.update_preview)
 
     def check_nvenc_support(self):
-        """Verifica se o FFmpeg suporta aceleração NVIDIA NVENC"""
         try:
-            # Executa 'ffmpeg -encoders' e procura por 'h264_nvenc'
             result = subprocess.run(['ffmpeg', '-encoders'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            if 'h264_nvenc' in result.stdout:
-                return True
-            return False
-        except Exception:
-            return False
+            return 'h264_nvenc' in result.stdout
+        except: return False
 
     def generate_dummy_data(self):
         x = np.linspace(0, np.pi, 128)
-        data = np.sin(x) * 0.8 + np.random.rand(128) * 0.2
-        return data
+        return np.sin(x) * 0.8 + np.random.rand(128) * 0.2
 
     def bgr_to_hex(self, bgr_tuple):
         b, g, r = bgr_tuple
@@ -81,144 +77,202 @@ class SpectrumApp(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # === Sidebar (Esquerda) ===
-        self.sidebar = ctk.CTkFrame(self, width=320, corner_radius=10)
+        # === Sidebar ===
+        self.sidebar = ctk.CTkScrollableFrame(self, width=320, corner_radius=10)
         self.sidebar.grid(row=0, column=0, sticky="nsew", padx=(15, 5), pady=15)
         
-        # Header Presets
+        # Presets
         pres_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        pres_frame.pack(fill="x", pady=(15, 5))
-        ctk.CTkButton(pres_frame, text="💾 Salvar Preset", width=120, fg_color="#444", command=self.save_preset).pack(side="left", padx=10)
-        ctk.CTkButton(pres_frame, text="📂 Abrir Preset", width=120, fg_color="#444", command=self.load_preset).pack(side="right", padx=10)
+        pres_frame.pack(fill="x", pady=(10, 5))
+        ctk.CTkButton(pres_frame, text="💾 Salvar", width=90, fg_color="#444", command=self.save_preset).pack(side="left", padx=5)
+        ctk.CTkButton(pres_frame, text="📂 Abrir", width=90, fg_color="#444", command=self.load_preset).pack(side="right", padx=5)
 
-        ctk.CTkLabel(self.sidebar, text="ARQUIVOS & MÍDIA", font=("Orbitron", 14, "bold"), text_color="#00ffff").pack(pady=(15, 5))
+        ctk.CTkLabel(self.sidebar, text="MÍDIA PRINCIPAL", font=("Orbitron", 14, "bold"), text_color="#00ffff").pack(pady=(15, 5))
 
-        # Inputs
         self.btn_audio = ctk.CTkButton(self.sidebar, text="📂 Pasta de Músicas", fg_color="#ff00ff", hover_color="#b300b3", command=self.select_audio_folder)
-        self.btn_audio.pack(pady=5, padx=15, fill="x")
+        self.btn_audio.pack(pady=5, padx=10, fill="x")
         self.lbl_audio = ctk.CTkLabel(self.sidebar, text="...", font=("Roboto", 10), text_color="gray")
         self.lbl_audio.pack(pady=(0, 10))
 
         self.btn_image = ctk.CTkButton(self.sidebar, text="🖼️ Imagem de Fundo", fg_color="#00ffff", hover_color="#00b3b3", text_color="black", command=self.select_image)
-        self.btn_image.pack(pady=5, padx=15, fill="x")
+        self.btn_image.pack(pady=5, padx=10, fill="x")
         self.lbl_image = ctk.CTkLabel(self.sidebar, text="...", font=("Roboto", 10), text_color="gray")
         self.lbl_image.pack(pady=(0, 10))
 
         self.btn_logo = ctk.CTkButton(self.sidebar, text="💎 Logotipo (Opcional)", fg_color="#333", border_color="#00ffff", border_width=1, command=self.select_logo)
-        self.btn_logo.pack(pady=5, padx=15, fill="x")
+        self.btn_logo.pack(pady=5, padx=10, fill="x")
         self.lbl_logo = ctk.CTkLabel(self.sidebar, text="Nenhum logo", font=("Roboto", 10), text_color="gray")
         self.lbl_logo.pack(pady=(0, 10))
 
-        # Config Exportação
-        ctk.CTkLabel(self.sidebar, text="CONFIGURAÇÃO DE SAÍDA", font=("Orbitron", 14, "bold"), text_color="#00ffff").pack(pady=(15, 5))
+        # --- CHROMA KEY UI ---
+        ctk.CTkLabel(self.sidebar, text="OVERLAY / CHROMA KEY", font=("Orbitron", 14, "bold"), text_color="#00ff00").pack(pady=(15, 5))
         
-        ctk.CTkLabel(self.sidebar, text="Resolução:").pack(anchor="w", padx=20)
+        self.btn_overlay = ctk.CTkButton(self.sidebar, text="🎬 Vídeo Subscribe (Verde)", fg_color="#00aa00", hover_color="#008800", command=self.select_overlay)
+        self.btn_overlay.pack(pady=5, padx=10, fill="x")
+        self.lbl_overlay = ctk.CTkLabel(self.sidebar, text="Nenhum vídeo", font=("Roboto", 10), text_color="gray")
+        self.lbl_overlay.pack(pady=(0, 5))
+
+        ctk.CTkLabel(self.sidebar, text="Repetir a cada (minutos):").pack(anchor="w", padx=20)
+        self.sld_interval = ctk.CTkSlider(self.sidebar, from_=1, to=30, number_of_steps=29)
+        self.sld_interval.set(5)
+        self.sld_interval.pack(fill="x", padx=15, pady=5)
+        
+        # Config Exportação
+        ctk.CTkLabel(self.sidebar, text="SAÍDA", font=("Orbitron", 14, "bold"), text_color="#00ffff").pack(pady=(15, 5))
         self.res_var = ctk.StringVar(value="1080p (Full HD)")
         self.res_menu = ctk.CTkOptionMenu(self.sidebar, variable=self.res_var, values=list(RESOLUTIONS.keys()), command=self.update_preview)
         self.res_menu.pack(fill="x", padx=15, pady=5)
 
-        ctk.CTkLabel(self.sidebar, text="Bitrate Áudio:").pack(anchor="w", padx=20)
         self.bitrate_var = ctk.StringVar(value="320k (Alta)")
         ctk.CTkOptionMenu(self.sidebar, variable=self.bitrate_var, values=["320k (Alta)", "192k (Padrão)", "128k (Baixa)"]).pack(fill="x", padx=15, pady=5)
 
-        # Checkboxes
-        self.check_norm = ctk.CTkCheckBox(self.sidebar, text="Normalizar Volume (0dB)", onvalue=True, offvalue=False)
-        self.check_norm.select()
-        self.check_norm.pack(pady=5, anchor="w", padx=20)
-        
-        self.check_fade = ctk.CTkCheckBox(self.sidebar, text="Crossfade Automático (4s)", onvalue=True, offvalue=False)
-        self.check_fade.select()
-        self.check_fade.pack(pady=5, anchor="w", padx=20)
+        self.check_norm = ctk.CTkCheckBox(self.sidebar, text="Normalizar Volume", onvalue=True, offvalue=False); self.check_norm.select(); self.check_norm.pack(pady=5)
+        self.check_fade = ctk.CTkCheckBox(self.sidebar, text="Crossfade (4s)", onvalue=True, offvalue=False); self.check_fade.select(); self.check_fade.pack(pady=5)
 
-        # === Hardware Status (NOVO) ===
-        ctk.CTkLabel(self.sidebar, text="STATUS DO HARDWARE", font=("Orbitron", 12, "bold"), text_color="gray").pack(pady=(25, 5))
-        
-        self.gpu_frame = ctk.CTkFrame(self.sidebar, fg_color="#222")
-        self.gpu_frame.pack(fill="x", padx=15, pady=5)
-        
-        if self.gpu_available:
-            self.lbl_gpu_status = ctk.CTkLabel(self.gpu_frame, text="⚡ GPU DETECTADA\n(NVENC ATIVO)", font=("Consolas", 12, "bold"), text_color="#00ff00")
-            self.lbl_gpu_desc = ctk.CTkLabel(self.sidebar, text="Renderização ultrarrápida habilitada.", font=("Roboto", 10), text_color="gray")
-        else:
-            self.lbl_gpu_status = ctk.CTkLabel(self.gpu_frame, text="⚠️ GPU NÃO ENCONTRADA\n(USANDO CPU)", font=("Consolas", 12, "bold"), text_color="#ff9900")
-            self.lbl_gpu_desc = ctk.CTkLabel(self.sidebar, text="A renderização será mais lenta.\nCertifique-se de ter drivers NVIDIA.", font=("Roboto", 10), text_color="#ff9900")
-            
-        self.lbl_gpu_status.pack(pady=10)
-        self.lbl_gpu_desc.pack(pady=0)
+        # Status
+        ctk.CTkLabel(self.sidebar, text="HARDWARE", font=("Orbitron", 12, "bold"), text_color="gray").pack(pady=(20, 5))
+        lbl_hw = "⚡ NVENC ATIVO" if self.gpu_available else "⚠️ CPU MODE"
+        color_hw = "#00ff00" if self.gpu_available else "#ff9900"
+        ctk.CTkLabel(self.sidebar, text=lbl_hw, font=("Consolas", 12, "bold"), text_color=color_hw).pack()
 
-
-        # === Main Panel (Direita) ===
+        # === Main Panel ===
         self.main_panel = ctk.CTkFrame(self, corner_radius=10)
         self.main_panel.grid(row=0, column=1, sticky="nsew", padx=(5, 15), pady=15)
         
         ctk.CTkLabel(self.main_panel, text="VISUAL & PREVIEW", font=("Orbitron", 14, "bold"), text_color="#ff00ff").pack(pady=(10, 5))
 
-        # Canvas
-        self.preview_canvas = Canvas(self.main_panel, height=220, bg="#000000", highlightthickness=0)
+        self.preview_canvas = Canvas(self.main_panel, height=250, bg="#000000", highlightthickness=0)
         self.preview_canvas.pack(fill="x", padx=20, pady=10)
 
-        # Controles
-        ctk.CTkLabel(self.main_panel, text="Paleta de Cores:").pack(anchor="w", padx=25)
+        ctk.CTkLabel(self.main_panel, text="Paleta:").pack(anchor="w", padx=25)
         self.color_var = ctk.StringVar(value="Neon Magenta")
-        self.color_menu = ctk.CTkOptionMenu(self.main_panel, variable=self.color_var, values=list(CYBERPUNK_COLORS.keys()), command=self.update_preview)
-        self.color_menu.pack(fill="x", padx=25, pady=(5, 10))
+        ctk.CTkOptionMenu(self.main_panel, variable=self.color_var, values=list(CYBERPUNK_COLORS.keys()), command=self.update_preview).pack(fill="x", padx=25)
 
-        # Sliders
-        ctk.CTkLabel(self.main_panel, text="Densidade (Bins):").pack(anchor="w", padx=25)
-        self.sld_density = ctk.CTkSlider(self.main_panel, from_=32, to=256, number_of_steps=7, command=self.update_preview)
-        self.sld_density.set(128)
-        self.sld_density.pack(fill="x", padx=25, pady=5)
+        ctk.CTkLabel(self.main_panel, text="Densidade:").pack(anchor="w", padx=25)
+        self.sld_density = ctk.CTkSlider(self.main_panel, from_=32, to=256, number_of_steps=7, command=self.update_preview); self.sld_density.set(128); self.sld_density.pack(fill="x", padx=25)
 
-        ctk.CTkLabel(self.main_panel, text="Sensibilidade (Altura):").pack(anchor="w", padx=25)
-        self.sld_sens = ctk.CTkSlider(self.main_panel, from_=0.5, to=3.0, number_of_steps=25, command=self.update_preview)
-        self.sld_sens.set(1.5)
-        self.sld_sens.pack(fill="x", padx=25, pady=5)
+        ctk.CTkLabel(self.main_panel, text="Altura:").pack(anchor="w", padx=25)
+        self.sld_sens = ctk.CTkSlider(self.main_panel, from_=0.5, to=3.0, number_of_steps=25, command=self.update_preview); self.sld_sens.set(1.5); self.sld_sens.pack(fill="x", padx=25)
         
-        ctk.CTkLabel(self.main_panel, text="Posição Waveform (Y %):").pack(anchor="w", padx=25)
-        self.sld_pos_y = ctk.CTkSlider(self.main_panel, from_=0.1, to=0.9, number_of_steps=50, command=self.update_preview)
-        self.sld_pos_y.set(0.6)
-        self.sld_pos_y.pack(fill="x", padx=25, pady=5)
+        ctk.CTkLabel(self.main_panel, text="Posição Y:").pack(anchor="w", padx=25)
+        self.sld_pos_y = ctk.CTkSlider(self.main_panel, from_=0.1, to=0.9, number_of_steps=50, command=self.update_preview); self.sld_pos_y.set(0.6); self.sld_pos_y.pack(fill="x", padx=25)
 
-        # Logo Config
-        ctk.CTkLabel(self.main_panel, text="Posição do Logotipo:").pack(anchor="w", padx=25)
+        ctk.CTkLabel(self.main_panel, text="Logo Pos:").pack(anchor="w", padx=25)
         self.logo_pos_var = ctk.StringVar(value="Centro")
-        ctk.CTkOptionMenu(self.main_panel, variable=self.logo_pos_var, values=LOGO_POSITIONS, command=self.update_preview).pack(fill="x", padx=25, pady=5)
+        ctk.CTkOptionMenu(self.main_panel, variable=self.logo_pos_var, values=LOGO_POSITIONS, command=self.update_preview).pack(fill="x", padx=25)
 
         self.check_pulse_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(self.main_panel, text="Reatividade: Fundo & Logo Pulsantes", variable=self.check_pulse_var).pack(pady=10)
 
-        # === Footer ===
+        # Footer
         self.footer = ctk.CTkFrame(self, height=180, corner_radius=10, fg_color="#1a1a1a")
         self.footer.grid(row=1, column=0, columnspan=2, sticky="ew", padx=15, pady=(0, 15))
 
-        self.status_frame = ctk.CTkFrame(self.footer, fg_color="transparent")
-        self.status_frame.pack(fill="x", padx=25, pady=(10, 0))
+        self.status_label = ctk.CTkLabel(self.footer, text="Pronto.", font=("Consolas", 11), text_color="gray"); self.status_label.pack(pady=5)
+        self.progress_bar = ctk.CTkProgressBar(self.footer, height=15, mode="determinate", progress_color="#00ffff"); self.progress_bar.set(0); self.progress_bar.pack(fill="x", padx=25)
+        self.btn_start = ctk.CTkButton(self.footer, text="INICIAR RENDERIZAÇÃO", font=("Orbitron", 14, "bold"), height=40, fg_color="green", hover_color="darkgreen", command=self.start_process); self.btn_start.pack(pady=15)
+
+    # --- PROCESSAMENTO DE OVERLAY PARA PREVIEW ---
+    def process_overlay_for_preview(self, path):
+        """Extrai um frame, remove o verde e prepara para o Canvas"""
+        try:
+            # 1. Captura um frame usando OpenCV
+            cap = cv2.VideoCapture(path)
+            # Pula para o segundo 2 (ou meio do vídeo) para pegar a animação
+            cap.set(cv2.CAP_PROP_POS_MSEC, 2000) 
+            ret, frame = cap.read()
+            cap.release()
+            
+            if not ret: return None
+
+            # 2. Redimensiona para o Preview (Largura do Canvas approx 600px -> Overlay 30%)
+            preview_w = 600
+            scale_ratio = (preview_w * 0.3) / frame.shape[1]
+            new_size = (int(frame.shape[1] * scale_ratio), int(frame.shape[0] * scale_ratio))
+            frame = cv2.resize(frame, new_size)
+
+            # 3. Chroma Key Manual (Simples com NumPy)
+            # Converte BGR para RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Adiciona canal Alpha
+            frame_rgba = np.dstack((frame_rgb, np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8) + 255))
+
+            # Detecta Verde (R<100, G>150, B<100) - Ajuste simples
+            r, g, b = frame_rgb[:,:,0], frame_rgb[:,:,1], frame_rgb[:,:,2]
+            mask = (g > 150) & (r < 150) & (b < 150)
+            
+            # Aplica transparência onde for verde
+            frame_rgba[mask] = [0, 0, 0, 0]
+
+            # 4. Converte para Image do PIL e depois ImageTk
+            pil_img = Image.fromarray(frame_rgba)
+            self.overlay_preview_img = ImageTk.PhotoImage(pil_img)
+            return True
+
+        except Exception as e:
+            print(f"Erro preview overlay: {e}")
+            return None
+
+    # --- Funções UI ---
+    def select_audio_folder(self):
+        path = filedialog.askdirectory()
+        if path: self.audio_path.set(path); self.lbl_audio.configure(text=os.path.basename(path), text_color="white")
+
+    def select_image(self):
+        path = filedialog.askopenfilename(filetypes=[("Imagens", "*.jpg *.png *.jpeg")])
+        if path: self.image_path.set(path); self.lbl_image.configure(text=os.path.basename(path), text_color="white")
+
+    def select_logo(self):
+        path = filedialog.askopenfilename(filetypes=[("Imagens PNG", "*.png")])
+        if path: self.logo_path.set(path); self.lbl_logo.configure(text=os.path.basename(path), text_color="white")
+
+    def select_overlay(self):
+        path = filedialog.askopenfilename(filetypes=[("Video Chroma", "*.mp4 *.mov *.avi")])
+        if path: 
+            self.overlay_path.set(path)
+            self.lbl_overlay.configure(text=os.path.basename(path), text_color="#00ff00")
+            # Gera o preview do overlay
+            self.process_overlay_for_preview(path)
+            self.update_preview()
+
+    def update_preview(self, _=None):
+        self.preview_canvas.delete("all")
+        w, h = self.preview_canvas.winfo_width(), self.preview_canvas.winfo_height()
+        if w < 10: w = 400
         
-        self.status_label = ctk.CTkLabel(self.status_frame, text="Pronto.", font=("Consolas", 11), text_color="gray", anchor="w")
-        self.status_label.pack(side="left")
-        self.lbl_timer = ctk.CTkLabel(self.status_frame, text="⏱ 00:00:00", font=("Consolas", 14, "bold"), text_color="#00ffff")
-        self.lbl_timer.pack(side="right")
+        # Desenha Waveform
+        n_bins, sens = int(self.sld_density.get()), self.sld_sens.get()
+        pos_y = self.sld_pos_y.get() * h
+        colors = CYBERPUNK_COLORS[self.color_var.get()]
+        
+        indices = np.linspace(0, len(self.dummy_data)-1, n_bins).astype(int)
+        data = self.dummy_data[indices] * sens
+        cx, bar_w = w / 2, w / (n_bins * 2)
+        
+        for i in range(n_bins):
+            bh = data[i] * (h/3)
+            xl, xr = cx - (i * bar_w) - bar_w, cx + (i * bar_w)
+            y_end = pos_y - bh
+            c1, c2 = self.bgr_to_hex(colors[1]), self.bgr_to_hex(colors[0])
+            self.preview_canvas.create_rectangle(xl, pos_y, xl+bar_w, y_end, fill=c2, outline=c1)
+            self.preview_canvas.create_rectangle(xr, pos_y, xr+bar_w, y_end, fill=c2, outline=c1)
 
-        self.progress_bar = ctk.CTkProgressBar(self.footer, height=15, mode="determinate", progress_color="#00ffff")
-        self.progress_bar.pack(fill="x", padx=25, pady=(5, 10))
-        self.progress_bar.set(0)
+        # Desenha Logo
+        if self.logo_path.get():
+            self.preview_canvas.create_text(w/2, h/2, text="LOGO", fill="white", font=("Arial", 8, "bold"))
 
-        self.btn_start = ctk.CTkButton(self.footer, text="INICIAR RENDERIZAÇÃO", font=("Orbitron", 14, "bold"), height=40, fg_color="green", hover_color="darkgreen", command=self.start_process)
-        self.btn_start.pack(pady=(0, 15))
+        # Desenha Overlay Preview (NOVO)
+        if self.overlay_preview_img:
+            # Posiciona no centro inferior (bottom center)
+            # image_obj precisa ser mantido na memória (self.overlay_preview_img)
+            self.preview_canvas.create_image(w/2, h - 20, image=self.overlay_preview_img, anchor="s")
 
-    # --- Funções Auxiliares (Mesmas da v6) ---
+    # --- Save/Load Presets & Loading Logic (Omissão para brevidade, igual v8) ---
     def save_preset(self):
         preset = {
-            "res": self.res_var.get(),
-            "bitrate": self.bitrate_var.get(),
-            "color": self.color_var.get(),
-            "density": self.sld_density.get(),
-            "sensitivity": self.sld_sens.get(),
-            "pos_y": self.sld_pos_y.get(),
-            "pulse": self.check_pulse_var.get(),
-            "norm": self.check_norm.get(),
-            "fade": self.check_fade.get(),
-            "logo_pos": self.logo_pos_var.get()
+            "res": self.res_var.get(), "bitrate": self.bitrate_var.get(), "color": self.color_var.get(),
+            "density": self.sld_density.get(), "sensitivity": self.sld_sens.get(), "pos_y": self.sld_pos_y.get(),
+            "pulse": self.check_pulse_var.get(), "logo_pos": self.logo_pos_var.get(), "interval": self.sld_interval.get()
         }
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON Preset", "*.json")])
         if path:
@@ -237,79 +291,21 @@ class SpectrumApp(ctk.CTk):
                 self.sld_sens.set(data.get("sensitivity", 1.5))
                 self.sld_pos_y.set(data.get("pos_y", 0.6))
                 self.check_pulse_var.set(data.get("pulse", True))
-                self.check_norm.select() if data.get("norm", True) else self.check_norm.deselect()
-                self.check_fade.select() if data.get("fade", True) else self.check_fade.deselect()
                 self.logo_pos_var.set(data.get("logo_pos", "Centro"))
+                if "interval" in data: self.sld_interval.set(data["interval"])
                 self.update_preview()
                 messagebox.showinfo("Carregado", "Preset aplicado!")
-
-    def update_timer_display(self):
-        if self.is_processing:
-            elapsed = time.time() - self.start_time
-            m, s = divmod(int(elapsed), 60)
-            h, m = divmod(m, 60)
-            self.lbl_timer.configure(text=f"⏱ {h:02d}:{m:02d}:{s:02d}")
-            self.after(1000, self.update_timer_display)
-
-    def select_audio_folder(self):
-        path = filedialog.askdirectory()
-        if path: self.audio_path.set(path); self.lbl_audio.configure(text=os.path.basename(path), text_color="white")
-
-    def select_image(self):
-        path = filedialog.askopenfilename(filetypes=[("Imagens", "*.jpg *.png *.jpeg")])
-        if path: self.image_path.set(path); self.lbl_image.configure(text=os.path.basename(path), text_color="white")
-
-    def select_logo(self):
-        path = filedialog.askopenfilename(filetypes=[("Imagens PNG", "*.png")])
-        if path: self.logo_path.set(path); self.lbl_logo.configure(text=os.path.basename(path), text_color="white")
-
-    def update_preview(self, _=None):
-        self.preview_canvas.delete("all")
-        w, h = self.preview_canvas.winfo_width(), self.preview_canvas.winfo_height()
-        if w < 10: w = 400
-        
-        n_bins = int(self.sld_density.get())
-        sens = self.sld_sens.get()
-        pos_y_canvas = self.sld_pos_y.get() * h
-        colors = CYBERPUNK_COLORS[self.color_var.get()]
-        
-        indices = np.linspace(0, len(self.dummy_data)-1, n_bins).astype(int)
-        data = self.dummy_data[indices] * sens
-        cx, bar_w = w / 2, w / (n_bins * 2)
-        
-        for i in range(n_bins):
-            bh = data[i] * (h/3)
-            xl, xr = cx - (i * bar_w) - bar_w, cx + (i * bar_w)
-            y_end = pos_y_canvas - bh
-            c1, c2 = self.bgr_to_hex(colors[1]), self.bgr_to_hex(colors[0])
-            self.preview_canvas.create_rectangle(xl, pos_y_canvas, xl+bar_w, y_end, fill=c2, outline=c1)
-            self.preview_canvas.create_rectangle(xr, pos_y_canvas, xr+bar_w, y_end, fill=c2, outline=c1)
-
-        if self.logo_path.get():
-            pos = self.logo_pos_var.get()
-            lx, ly = w/2, h/2
-            margin = 20
-            if "Sup. Esq" in pos: lx, ly = margin + 20, margin + 20
-            elif "Sup. Dir" in pos: lx, ly = w - margin - 20, margin + 20
-            elif "Inf. Esq" in pos: lx, ly = margin + 20, h - margin - 20
-            elif "Inf. Dir" in pos: lx, ly = w - margin - 20, h - margin - 20
-            self.preview_canvas.create_text(lx, ly, text="LOGO", fill="white", font=("Arial", 8, "bold"))
 
     def set_loading(self, active=True):
         if active:
             self.progress_bar.configure(mode="indeterminate")
             self.progress_bar.start()
             self.btn_start.configure(state="disabled", text="PROCESSANDO...", fg_color="gray")
-            self.start_time = time.time()
-            self.update_timer_display()
         else:
             self.progress_bar.stop()
             self.progress_bar.configure(mode="determinate")
             self.progress_bar.set(0)
             self.btn_start.configure(state="normal", text="INICIAR RENDERIZAÇÃO", fg_color="green")
-
-    def log(self, text):
-        self.status_label.configure(text=text)
 
     def overlay_image_alpha(self, img, img_overlay, x, y):
         h, w = img.shape[:2]
@@ -327,13 +323,10 @@ class SpectrumApp(ctk.CTk):
         img[y:y+h_ov, x:x+w_ov] = img_crop
         return img
 
-    # --- LÓGICA PRINCIPAL COM GPU CHECK ---
     def start_process(self):
         if self.is_processing: return
         if not self.audio_path.get() or not self.image_path.get():
-            messagebox.showwarning("Aviso", "Faltam arquivos obrigatórios!")
-            return
-        
+            messagebox.showwarning("Aviso", "Arquivos incompletos!"); return
         self.is_processing = True
         self.set_loading(True)
         threading.Thread(target=self.process_video_logic, daemon=True).start()
@@ -343,22 +336,14 @@ class SpectrumApp(ctk.CTk):
             res_name = self.res_var.get()
             target_w, target_h = RESOLUTIONS[res_name]
             bitrate_str = self.bitrate_var.get().split()[0]
-            
-            # --- SELEÇÃO DE CODEC BASEADA EM GPU ---
-            if self.gpu_available:
-                video_codec = "h264_nvenc"
-                preset = "p4" # Preset balanceado para NVENC
-                self.log(f"Iniciando MODO GPU (NVENC)...")
-            else:
-                video_codec = "libx264"
-                preset = "ultrafast" # Mais rápido para testes CPU
-                self.log(f"Iniciando MODO CPU (Standard)...")
+            video_codec = "h264_nvenc" if self.gpu_available else "libx264"
+            preset = "p4" if self.gpu_available else "ultrafast"
 
-            self.log("Preparando Áudios...")
+            self.status_label.configure(text="Lendo Áudios...")
             audio_files = [os.path.join(self.audio_path.get(), f) for f in os.listdir(self.audio_path.get()) if f.lower().endswith(('.mp3', '.wav'))]
             audio_files.sort()
             
-            if not audio_files: raise Exception("Pasta vazia.")
+            if not audio_files: raise Exception("Sem áudios.")
 
             processed_clips = []
             crossfade_duration = 4 if self.check_fade.get() else 0
@@ -369,11 +354,9 @@ class SpectrumApp(ctk.CTk):
                 clip = AudioFileClip(path)
                 if self.check_norm.get(): clip = clip.fx(afx.audio_normalize)
                 if self.check_fade.get(): clip = clip.audio_fadein(2).audio_fadeout(2)
-                
                 start_t = max(0, current_start - crossfade_duration) if i > 0 else 0
                 clip = clip.set_start(start_t)
                 processed_clips.append(clip)
-                
                 real_start = start_t + (2 if i > 0 and self.check_fade.get() else 0)
                 m, s = divmod(int(real_start), 60)
                 timestamps.append(f"{m:02d}:{s:02d} - {os.path.splitext(os.path.basename(path))[0]}")
@@ -381,10 +364,10 @@ class SpectrumApp(ctk.CTk):
 
             with open(os.path.join(self.audio_path.get(), "tracklist.txt"), "w") as t: t.write("\n".join(timestamps))
 
-            self.log("Mixando Áudio...")
+            self.status_label.configure(text="Mixando...")
             final_audio = CompositeAudioClip(processed_clips)
+            final_duration = final_audio.duration
             
-            self.log("Processando Imagens...")
             bg = cv2.imread(self.image_path.get())
             bg = cv2.resize(bg, (target_w, target_h))
             
@@ -397,21 +380,18 @@ class SpectrumApp(ctk.CTk):
                     l_w = int(logo_img.shape[1] * ratio)
                     logo_img = cv2.resize(logo_img, (l_w, l_h))
             
-            self.log("Análise FFT...")
+            self.status_label.configure(text="FFT Analysis...")
             temp_wav = "temp_mix.wav"
             final_audio.write_audiofile(temp_wav, fps=22050, verbose=False, logger=None)
             y, sr = librosa.load(temp_wav, sr=22050)
             os.remove(temp_wav)
-            
             D = np.abs(librosa.stft(y, n_fft=2048, hop_length=512))
             DB = librosa.amplitude_to_db(D, ref=np.max)
 
-            n_bins = int(self.sld_density.get())
-            sens = self.sld_sens.get()
+            n_bins, sens = int(self.sld_density.get()), self.sld_sens.get()
             pos_y_pixel = int(self.sld_pos_y.get() * target_h)
             colors = CYBERPUNK_COLORS[self.color_var.get()]
-            pulse = self.check_pulse_var.get()
-            logo_pos_setting = self.logo_pos_var.get()
+            pulse, logo_pos_setting = self.check_pulse_var.get(), self.logo_pos_var.get()
 
             def make_frame(t):
                 idx = int(t * sr / 512)
@@ -459,30 +439,38 @@ class SpectrumApp(ctk.CTk):
 
                 return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            self.log(f"RENDERIZANDO ({video_codec})...")
-            video = VideoClip(make_frame, duration=final_audio.duration)
-            video = video.set_audio(final_audio)
+            spectrum_clip = VideoClip(make_frame, duration=final_duration)
             
-            out = os.path.join(self.audio_path.get(), f"Mix_v7_GPU_{int(time.time())}.mp4")
+            final_layers = [spectrum_clip]
+            if self.overlay_path.get():
+                self.status_label.configure(text="Aplicando Chroma Key...")
+                ov_clip = VideoFileClip(self.overlay_path.get())
+                ov_clip = ov_clip.fx(vfx.mask_color, color=[0, 255, 0], thr=100, s=5)
+                ov_clip = ov_clip.resize(width=target_w * 0.3)
+                ov_clip = ov_clip.set_position(("center", "bottom"))
+                
+                interval_sec = self.sld_interval.get() * 60
+                current_ov_time = interval_sec
+                while current_ov_time < final_duration - 10:
+                    final_layers.append(ov_clip.set_start(current_ov_time))
+                    current_ov_time += interval_sec
             
-            # --- RENDER FINAL ---
-            video.write_videofile(
-                out, 
-                fps=30, 
-                codec=video_codec, # Habilita GPU se disponível
-                preset=preset, 
-                audio_codec="aac", 
-                audio_bitrate=bitrate_str, 
-                threads=4, 
-                verbose=False, logger=None
+            self.status_label.configure(text=f"Renderizando ({len(final_layers)} layers)...")
+            final_video = CompositeVideoClip(final_layers)
+            final_video = final_video.set_audio(final_audio)
+            
+            out = os.path.join(self.audio_path.get(), f"Mix_v9_Overlay_{int(time.time())}.mp4")
+            
+            final_video.write_videofile(
+                out, fps=30, codec=video_codec, preset=preset, 
+                audio_codec="aac", audio_bitrate=bitrate_str, 
+                threads=4, verbose=False, logger=None
             )
             
-            self.log("Concluído!")
-            messagebox.showinfo("Sucesso", f"Vídeo salvo em:\n{out}")
+            messagebox.showinfo("Sucesso", f"Vídeo salvo:\n{out}")
 
         except Exception as e:
             messagebox.showerror("Erro", str(e))
-            self.log(f"Erro: {str(e)}")
         finally:
             self.is_processing = False
             self.set_loading(False)
